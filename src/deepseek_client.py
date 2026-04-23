@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+import random
 
 import httpx
 
@@ -59,6 +60,11 @@ def _build_block(chapters: list[Chapter]) -> str:
 
 
 class DeepSeekClient:
+    """DeepSeek API wrapper. Thread-safe for concurrent summarize_batch calls:
+    a single instance may be shared across ThreadPoolExecutor workers.
+    One HTTP request per summarize_batch() call.
+    """
+
     def __init__(
         self,
         api_key: str,
@@ -108,27 +114,36 @@ class DeepSeekClient:
 
         last_err: Exception | None = None
         for attempt in range(_MAX_RETRIES):
+            retry_after: float | None = None
             try:
                 resp = self._client.post("/chat/completions", json=body)
             except (httpx.TimeoutException, httpx.TransportError) as e:
                 last_err = e
-                if attempt < _MAX_RETRIES - 1:
-                    time.sleep(self._retry_base_delay * (2 ** attempt))
-                continue
+            else:
+                if resp.status_code == 200:
+                    return self._parse(resp.json())
+                if resp.status_code == 429 or 500 <= resp.status_code < 600:
+                    last_err = DeepSeekError(
+                        f"HTTP {resp.status_code}: {resp.text[:200]}"
+                    )
+                    if resp.status_code == 429:
+                        ra = resp.headers.get("Retry-After")
+                        if ra:
+                            try:
+                                retry_after = float(ra)
+                            except ValueError:
+                                retry_after = None
+                else:
+                    # 4xx other than 429: don't retry
+                    raise DeepSeekError(f"HTTP {resp.status_code}: {resp.text[:200]}")
 
-            if resp.status_code == 200:
-                return self._parse(resp.json())
-
-            if resp.status_code == 429 or 500 <= resp.status_code < 600:
-                last_err = DeepSeekError(
-                    f"HTTP {resp.status_code}: {resp.text[:200]}"
+            if attempt < _MAX_RETRIES - 1:
+                base = retry_after if retry_after is not None else (
+                    self._retry_base_delay * (2 ** attempt)
                 )
-                if attempt < _MAX_RETRIES - 1:
-                    time.sleep(self._retry_base_delay * (2 ** attempt))
-                continue
-
-            # 4xx other than 429: don't retry
-            raise DeepSeekError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+                # Jitter in [0.5, 1.5) to decorrelate concurrent workers.
+                jittered = base * (0.5 + random.random())
+                time.sleep(jittered)
 
         raise DeepSeekError(f"exhausted retries: {last_err}")
 
