@@ -208,12 +208,16 @@ class Analyzer:
                         self._log("error", f"✗ {batch_range} 失败: {e}")
                         if failed_batch_count >= _MAX_FAILED_BATCHES:
                             aborted = True
-                            self._stop.set()  # cancel remaining via watcher
+                            self._stop.set()
+                            # Cancel pending futures synchronously so they don't
+                            # sneak in after abort while the watcher is polling.
+                            for f in future_to_batch:
+                                f.cancel()
                         continue
 
                     summaries.update(result)
                     missing = [c.id for c in batch if c.id not in result]
-                    done_chapters += len(batch)
+                    done_chapters += len(result)  # count actual summaries, not batch size
                     self._q.put({
                         "type": "progress",
                         "done": done_chapters,
@@ -239,7 +243,14 @@ class Analyzer:
         else:
             reason = "completed"
 
-        # 6. Write markdown
+        # 6. Write markdown (skip if aborted before any success — empty file is clutter)
+        if aborted and not summaries:
+            self._q.put({
+                "type": "error",
+                "reason": "分析中止：连续失败过多，未产出任何章节摘要",
+            })
+            return
+
         novel_name = self._cfg.txt_path.stem
         generated_at = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
         md = format_output_markdown(
