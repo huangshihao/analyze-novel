@@ -109,6 +109,16 @@ def test_read_txt_utf8_bom(tmp_path: Path):
     assert not result.startswith("﻿")
 
 
+def test_read_txt_gb18030_with_rare_char(tmp_path: Path):
+    # Real Chinese novels use GB18030 (superset of GBK) — some rare chars
+    # like  (Private Use Area) or extended CJK are GB18030-only.
+    # GBK alone would fail. Ensures we don't regress back to GBK.
+    p = tmp_path / "novel.txt"
+    p.write_bytes("第一章 内容丨丯".encode("gb18030"))
+    result = read_txt_with_encoding_fallback(p)
+    assert result.startswith("第一章 内容")
+
+
 def test_read_txt_gbk_fallback(tmp_path: Path):
     p = tmp_path / "novel.txt"
     p.write_bytes("第一章 中文".encode("gbk"))
