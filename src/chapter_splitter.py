@@ -45,9 +45,17 @@ def _clean(text: str) -> str:
     return text.strip()
 
 
-def split_chapters(text: str) -> list[Chapter]:
+def split_chapters(
+    text: str, pattern: re.Pattern[str] | None = None
+) -> list[Chapter]:
+    """Split text into chapters.
+
+    `pattern` (if given) must have exactly one capture group containing the
+    full title. When None, falls back to the built-in `第X章` regex.
+    """
     cleaned = _clean(text)
-    matches = list(_CHAPTER_RE.finditer(cleaned))
+    regex = pattern if pattern is not None else _CHAPTER_RE
+    matches = list(regex.finditer(cleaned))
     if not matches:
         return []
 

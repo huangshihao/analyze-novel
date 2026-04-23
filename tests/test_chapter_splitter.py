@@ -1,3 +1,5 @@
+import re
+
 from chapter_splitter import Chapter, split_chapters
 
 
@@ -73,3 +75,29 @@ def test_crlf_line_endings():
     text = f"第一章 Windows\r\n{_body(1)}\r\n第二章 换行\r\n{_body(2)}"
     chapters = split_chapters(text)
     assert len(chapters) == 2
+
+
+def test_custom_pattern_numeric_only_headings():
+    # Novels published as "001", "002", … have no `第X章` marker; default
+    # regex can't handle them, so caller supplies its own pattern.
+    pattern = re.compile(r"^[ \t　]*(\d{3}[^\n]*)", re.MULTILINE)
+    text = f"001 起因\n{_body(1)}\n002 经过\n{_body(2)}"
+    chapters = split_chapters(text, pattern=pattern)
+    assert len(chapters) == 2
+    assert chapters[0].title == "001 起因"
+    assert chapters[1].title == "002 经过"
+
+
+def test_custom_pattern_body_filter_still_applied():
+    pattern = re.compile(r"^[ \t　]*(\d{3}[^\n]*)", re.MULTILINE)
+    text = f"001 目录\n短\n002 正文\n{_body(2)}"
+    chapters = split_chapters(text, pattern=pattern)
+    assert len(chapters) == 1
+    assert chapters[0].title == "002 正文"
+    assert chapters[0].id == 1  # renumbered after filter
+
+
+def test_pattern_none_uses_default():
+    # Explicit None should behave identically to the default arg.
+    text = f"第一章 起因\n{_body(1)}"
+    assert split_chapters(text, pattern=None) == split_chapters(text)

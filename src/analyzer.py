@@ -136,38 +136,6 @@ class Analyzer:
             self._q.put({"type": "error", "reason": f"读文件失败: {e}"})
             return
 
-        # 2. Split chapters
-        all_chapters = split_chapters(raw)
-        if not all_chapters:
-            self._q.put({
-                "type": "error",
-                "reason": "无法识别章节格式，请确认文件包含'第X章'标记",
-            })
-            return
-        self._log("info", f"已切分 {len(all_chapters)} 章")
-
-        # 3. Clamp range
-        start = max(1, self._cfg.chapter_start)
-        end = min(len(all_chapters), self._cfg.chapter_end)
-        if start > end:
-            self._q.put({
-                "type": "error",
-                "reason": f"起始章 {start} 大于结束章 {end}（总章数 {len(all_chapters)}）",
-            })
-            return
-        if end != self._cfg.chapter_end:
-            self._log("warn", f"结束章 {self._cfg.chapter_end} 超过总章数，已调整为 {end}")
-
-        target = all_chapters[start - 1:end]  # inclusive
-        total = len(target)
-        self._log("info", f"准备分析第 {start}-{end} 章，共 {total} 章")
-
-        # 4. Batch + concurrent calls
-        batches = batch_chapters(target, _BATCH_SIZE)
-        summaries: dict[int, str] = {}
-        failed_batch_count = 0
-        done_chapters = 0
-
         client = DeepSeekClient(api_key=self._cfg.api_key)
         aborted = False
         # Local flag so the watcher can exit cleanly on normal completion
@@ -175,6 +143,48 @@ class Analyzer:
         # per analysis run).
         analysis_done = threading.Event()
         try:
+            # 2. Detect chapter format (best-effort) and split
+            pattern = client.detect_chapter_pattern(raw[:10000])
+            if pattern is None:
+                self._log("info", "未能识别章节格式，使用内置正则")
+            else:
+                self._log("info", f"已识别章节格式：{pattern.pattern}")
+
+            all_chapters = split_chapters(raw, pattern=pattern)
+            if not all_chapters and pattern is not None:
+                self._log("warn", "识别出的正则未匹配到章节，回退到内置正则")
+                all_chapters = split_chapters(raw)
+
+            if not all_chapters:
+                self._q.put({
+                    "type": "error",
+                    "reason": "无法识别章节格式，请确认文件包含章节标记",
+                })
+                return
+            self._log("info", f"已切分 {len(all_chapters)} 章")
+
+            # 3. Clamp range
+            start = max(1, self._cfg.chapter_start)
+            end = min(len(all_chapters), self._cfg.chapter_end)
+            if start > end:
+                self._q.put({
+                    "type": "error",
+                    "reason": f"起始章 {start} 大于结束章 {end}（总章数 {len(all_chapters)}）",
+                })
+                return
+            if end != self._cfg.chapter_end:
+                self._log("warn", f"结束章 {self._cfg.chapter_end} 超过总章数，已调整为 {end}")
+
+            target = all_chapters[start - 1:end]  # inclusive
+            total = len(target)
+            self._log("info", f"准备分析第 {start}-{end} 章，共 {total} 章")
+
+            # 4. Batch + concurrent calls
+            batches = batch_chapters(target, _BATCH_SIZE)
+            summaries: dict[int, str] = {}
+            failed_batch_count = 0
+            done_chapters = 0
+
             with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
                 # Submit all batches upfront; stop_event will cancel pending ones.
                 future_to_batch: dict[Any, list[Chapter]] = {
