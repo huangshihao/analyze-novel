@@ -34,7 +34,7 @@ def batch_chapters(chapters: list[Chapter], size: int) -> list[list[Chapter]]:
 def read_txt_with_encoding_fallback(path: Path) -> str:
     """Try UTF-8 first, fall back to GBK (common for Windows-produced .txt files)."""
     data = path.read_bytes()
-    for enc in ("utf-8", "gbk"):
+    for enc in ("utf-8-sig", "gbk"):
         try:
             return data.decode(enc)
         except UnicodeDecodeError:

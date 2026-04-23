@@ -99,6 +99,16 @@ def test_read_txt_utf8(tmp_path: Path):
     assert read_txt_with_encoding_fallback(p) == "第一章 正文内容"
 
 
+def test_read_txt_utf8_bom(tmp_path: Path):
+    # Windows Notepad saves UTF-8 with BOM by default. Must decode correctly
+    # AND strip the BOM, or the chapter regex downstream won't match.
+    p = tmp_path / "novel.txt"
+    p.write_bytes(b"\xef\xbb\xbf" + "第一章 开头".encode("utf-8"))
+    result = read_txt_with_encoding_fallback(p)
+    assert result == "第一章 开头"
+    assert not result.startswith("﻿")
+
+
 def test_read_txt_gbk_fallback(tmp_path: Path):
     p = tmp_path / "novel.txt"
     p.write_bytes("第一章 中文".encode("gbk"))
