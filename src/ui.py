@@ -159,6 +159,9 @@ class App:
     # ── log queue polling ──────────────────────────────────────────────────
 
     def _poll_queue(self) -> None:
+        # Window may have been closed while a run is still draining; skip if so.
+        if not self.root.winfo_exists():
+            return
         try:
             while True:
                 msg = self._log_queue.get_nowait()
